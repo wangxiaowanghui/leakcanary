@@ -5,8 +5,8 @@ import android.content.pm.ApplicationInfo
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import leakcanary.Clock
 import leakcanary.AppWatcher
+import leakcanary.Clock
 import leakcanary.ObjectWatcher
 import leakcanary.OnObjectRetainedListener
 import shark.SharkLog
@@ -14,16 +14,15 @@ import java.lang.reflect.InvocationHandler
 import java.lang.reflect.Proxy
 import java.util.concurrent.Executor
 
+/**
+ * Note: this object must load fine in a JUnit environment
+ */
 internal object InternalAppWatcher {
 
   val isInstalled
     get() = ::application.isInitialized
 
   private val onAppWatcherInstalled: (Application) -> Unit
-
-  val isDebuggableBuild by lazy {
-    (application.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
-  }
 
   lateinit var application: Application
 
@@ -33,7 +32,13 @@ internal object InternalAppWatcher {
     }
   }
 
-  private val mainHandler = Handler(Looper.getMainLooper())
+  private val mainHandler by lazy {
+    Handler(Looper.getMainLooper())
+  }
+
+  private val isDebuggableBuild by lazy {
+    (application.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+  }
 
   init {
     val internalLeakCanary = try {
@@ -53,17 +58,18 @@ internal object InternalAppWatcher {
   val objectWatcher = ObjectWatcher(
       clock = clock,
       checkRetainedExecutor = checkRetainedExecutor,
-      isEnabled = { AppWatcher.config.enabled }
+      isEnabled = { true }
   )
 
   fun install(application: Application) {
-    SharkLog.logger = DefaultCanaryLog()
-    SharkLog.d { "Installing AppWatcher" }
     checkMainThread()
     if (this::application.isInitialized) {
       return
     }
     InternalAppWatcher.application = application
+    if (isDebuggableBuild) {
+      SharkLog.logger = DefaultCanaryLog()
+    }
 
     val configProvider = { AppWatcher.config }
     ActivityDestroyWatcher.install(application, objectWatcher, configProvider)

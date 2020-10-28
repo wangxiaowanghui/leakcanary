@@ -60,7 +60,11 @@ enum class AndroidReferenceMatchers {
                   "anonymous subclass. That anonymous subclass has a reference to the activity. " +
                   "Another process is keeping the android.app.IRequestFinishCallback\$Stub " +
                   "reference alive long after Activity.onDestroyed() has been called, " +
-                  "causing the activity to leak."
+                  "causing the activity to leak. " +
+                  "Fix: You can \"fix\" this leak by overriding Activity.onBackPressed() and calling " +
+                  "Activity.finishAfterTransition(); instead of super if the activity is task root and the " +
+                  "fragment stack is empty. " +
+                  "Tracked here: https://issuetracker.google.com/issues/139738913"
           ) {
               sdkInt == 29
           }
@@ -181,8 +185,6 @@ enum class AndroidReferenceMatchers {
           + " has been shown to happen in both Dalvik and ART.")
 
       references += instanceFieldLeak("android.os.Message", "obj", description)
-      references += instanceFieldLeak("android.os.Message", "next", description)
-      references += instanceFieldLeak("android.os.Message", "target", description)
     }
   },
 
@@ -540,7 +542,7 @@ enum class AndroidReferenceMatchers {
               " on the screen. TextView.ChangeWatcher and android.widget.Editor end up in spans and" +
               " typically hold on to the view hierarchy"
       ) {
-        sdkInt in 24..28
+        sdkInt in 24..29
       }
     }
   },
@@ -827,7 +829,7 @@ enum class AndroidReferenceMatchers {
       references += instanceFieldLeak(
           "android.app.SemAppIconSolution", "mContext"
       ) {
-        manufacturer == SAMSUNG && sdkInt == 28
+        manufacturer == SAMSUNG && sdkInt in 28..29
       }
     }
   },
@@ -955,6 +957,23 @@ enum class AndroidReferenceMatchers {
           "Samsung added a static mTargetView field to TextView which holds on to detached views."
       ) {
         manufacturer == SAMSUNG && sdkInt == 27
+      }
+    }
+  },
+
+  MULTI_WINDOW_DECOR_SUPPORT__MWINDOW {
+    override fun add(
+      references: MutableList<ReferenceMatcher>
+    ) {
+      references += instanceFieldLeak(
+          "com.android.internal.policy.MultiWindowDecorSupport", "mWindow",
+          description = """DecorView isn't leaking but its mDecorViewSupport field holds
+            |a MultiWindowDecorSupport which has a mWindow field which holds a leaking PhoneWindow.
+            |DecorView.mDecorViewSupport doesn't exist in AOSP.
+            |Filed here: https://github.com/square/leakcanary/issues/1819
+          """.trimMargin()
+      ) {
+        manufacturer == SAMSUNG && sdkInt in 26..29
       }
     }
   },
@@ -1099,7 +1118,7 @@ enum class AndroidReferenceMatchers {
             field which references a decor context which references a destroyed activity.
           """.trimIndent()
       ) {
-        manufacturer == SHARP && sdkInt == 28
+        manufacturer == SHARP && sdkInt == 29
       }
     }
   },
@@ -1116,6 +1135,23 @@ enum class AndroidReferenceMatchers {
           """.trimIndent()
       ) {
         manufacturer == ONE_PLUS && sdkInt == 28
+      }
+    }
+  },
+
+  RAZER_TEXT_KEY_LISTENER__MCONTEXT {
+    override fun add(
+      references: MutableList<ReferenceMatcher>
+    ) {
+      references += instanceFieldLeak(
+          "android.text.method.TextKeyListener", "mContext",
+          description =
+          """
+            In AOSP, TextKeyListener instances are held in a TextKeyListener.sInstances static
+            array. The Razer implementation added a mContext field, creating activity leaks.
+          """.trimIndent()
+      ) {
+        manufacturer == RAZER && sdkInt == 28
       }
     }
   },
@@ -1214,12 +1250,14 @@ enum class AndroidReferenceMatchers {
     const val ONE_PLUS = "OnePlus"
     const val HUAWEI = "HUAWEI"
     const val VIVO = "vivo"
+    const val RAZER = "Razer"
     const val SHARP = "SHARP"
 
     /**
      * Returns a list of [ReferenceMatcher] that only contains [IgnoredReferenceMatcher] and no
      * [LibraryLeakReferenceMatcher].
      */
+    @JvmStatic
     val ignoredReferencesOnly: List<ReferenceMatcher>
       get() = buildKnownReferences(
           EnumSet.of(
@@ -1234,6 +1272,7 @@ enum class AndroidReferenceMatchers {
     /**
      * @see [AndroidReferenceMatchers]
      */
+    @JvmStatic
     val appDefaults: List<ReferenceMatcher>
       get() = buildKnownReferences(EnumSet.allOf(AndroidReferenceMatchers::class.java))
 
@@ -1241,6 +1280,7 @@ enum class AndroidReferenceMatchers {
      * Builds a list of [ReferenceMatcher] from the [referenceMatchers] set of
      * [AndroidReferenceMatchers].
      */
+    @JvmStatic
     fun buildKnownReferences(referenceMatchers: Set<AndroidReferenceMatchers>): List<ReferenceMatcher> {
       val resultSet = mutableListOf<ReferenceMatcher>()
       referenceMatchers.forEach {
@@ -1257,6 +1297,7 @@ enum class AndroidReferenceMatchers {
      * Creates a [LibraryLeakReferenceMatcher] that matches a [StaticFieldPattern].
      * [description] should convey what we know about this library leak.
      */
+    @JvmStatic
     fun staticFieldLeak(
       className: String,
       fieldName: String,
@@ -1270,6 +1311,7 @@ enum class AndroidReferenceMatchers {
      * Creates a [LibraryLeakReferenceMatcher] that matches a [InstanceFieldPattern].
      * [description] should convey what we know about this library leak.
      */
+    @JvmStatic
     fun instanceFieldLeak(
       className: String,
       fieldName: String,
@@ -1279,6 +1321,7 @@ enum class AndroidReferenceMatchers {
       return libraryLeak(InstanceFieldPattern(className, fieldName), description, patternApplies)
     }
 
+    @JvmStatic
     fun nativeGlobalVariableLeak(
       className: String,
       description: String = "",
@@ -1305,6 +1348,7 @@ enum class AndroidReferenceMatchers {
     /**
      * Creates a [IgnoredReferenceMatcher] that matches a [InstanceFieldPattern].
      */
+    @JvmStatic
     fun ignoredInstanceField(
       className: String,
       fieldName: String
@@ -1315,6 +1359,7 @@ enum class AndroidReferenceMatchers {
     /**
      * Creates a [IgnoredReferenceMatcher] that matches a [JavaLocalPattern].
      */
+    @JvmStatic
     fun ignoredJavaLocal(
       threadName: String
     ): IgnoredReferenceMatcher {

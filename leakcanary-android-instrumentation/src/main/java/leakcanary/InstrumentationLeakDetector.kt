@@ -19,27 +19,22 @@ import android.os.Debug
 import android.os.SystemClock
 import androidx.test.platform.app.InstrumentationRegistry.getInstrumentation
 import leakcanary.GcTrigger.Default.runGc
-import leakcanary.InstrumentationLeakDetector.Companion.updateConfig
 import leakcanary.InstrumentationLeakDetector.Result.AnalysisPerformed
 import leakcanary.InstrumentationLeakDetector.Result.NoAnalysis
 import org.junit.runner.notification.RunListener
 import shark.HeapAnalysis
 import shark.HeapAnalysisException
 import shark.HeapAnalysisFailure
+import shark.HeapAnalysisSuccess
 import shark.HeapAnalyzer
-import shark.ObjectInspectors
 import shark.SharkLog
 import java.io.File
 
 /**
  * [InstrumentationLeakDetector] can be used to detect memory leaks in instrumentation tests.
  *
- * To use it, you need to:
- *
- *  - Call [updateConfig] so that [AppWatcher] will watch objects and [LeakCanary] will not dump
- *  the heap on retained objects
- *  - Add an instrumentation test listener (e.g. [FailTestOnLeakRunListener]) that will invoke
- * [detectLeaks].
+ * To use it, you need to add an instrumentation test listener (e.g. [FailTestOnLeakRunListener])
+ * that will invoke [detectLeaks].
  *
  * ### Add an instrumentation test listener
  *
@@ -75,7 +70,7 @@ import java.io.File
  *  - Heap dumps freeze the VM, and the leak analysis is IO and CPU heavy. This can slow down
  * the test and introduce flakiness
  *  - The leak analysis is asynchronous by default. This means the tests could finish and the
- *  process die before the analysis is finished.
+ *  process dies before the analysis is finished.
  *
  * The approach taken here is to collect all objects to watch as you run the test, but not
  * do any heap dump during the test. Then, at the end, if any of the watched objects is still in
@@ -149,14 +144,19 @@ class InstrumentationLeakDetector {
     val heapDumpUptimeMillis = SystemClock.uptimeMillis()
     KeyedWeakReference.heapDumpUptimeMillis = heapDumpUptimeMillis
 
+    val heapDumpDurationMillis: Long
+
     try {
       Debug.dumpHprofData(heapDumpFile.absolutePath)
+      heapDumpDurationMillis = SystemClock.uptimeMillis() - heapDumpUptimeMillis
     } catch (exception: Exception) {
       SharkLog.d(exception) { "Could not dump heap" }
       return AnalysisPerformed(
           HeapAnalysisFailure(
-              heapDumpFile, analysisDurationMillis = 0,
+              heapDumpFile = heapDumpFile,
               createdAtTimeMillis = System.currentTimeMillis(),
+              dumpDurationMillis = SystemClock.uptimeMillis() - heapDumpUptimeMillis,
+              analysisDurationMillis = 0,
               exception = HeapAnalysisException(exception)
           )
       )
@@ -166,32 +166,30 @@ class InstrumentationLeakDetector {
 
     val listener = shark.OnAnalysisProgressListener.NO_OP
 
+    // Giving an extra 2 seconds to flush the hprof to the file system. We've seen several cases
+    // of corrupted hprof files and assume this could be a timing issue.
+    SystemClock.sleep(2000)
+
     val heapAnalyzer = HeapAnalyzer(listener)
-    val heapAnalysis = heapAnalyzer.analyze(
-        heapDumpFile, config.referenceMatchers,
-        config.computeRetainedHeapSize,
-        config.objectInspectors,
-        if (config.useExperimentalLeakFinders) config.objectInspectors else listOf(
-            ObjectInspectors.KEYED_WEAK_REFERENCE
-        )
-    )
-
-    SharkLog.d { "Heap Analysis:\n$heapAnalysis" }
-
-    return AnalysisPerformed(heapAnalysis)
+    val fullHeapAnalysis = when (val heapAnalysis = heapAnalyzer.analyze(
+        heapDumpFile = heapDumpFile,
+        leakingObjectFinder = config.leakingObjectFinder,
+        referenceMatchers = config.referenceMatchers,
+        computeRetainedHeapSize = config.computeRetainedHeapSize,
+        objectInspectors = config.objectInspectors
+    )) {
+      is HeapAnalysisSuccess -> heapAnalysis.copy(dumpDurationMillis = heapDumpDurationMillis)
+      is HeapAnalysisFailure -> heapAnalysis.copy(dumpDurationMillis = heapDumpDurationMillis)
+    }
+    return AnalysisPerformed(fullHeapAnalysis)
   }
 
   companion object {
 
-    /**
-     * Configures [AppWatcher] to watch objects and [LeakCanary] to not dump the heap on retained
-     * objects so that instrumentation tests run smoothly, and we can look for leaks at the end of
-     * a test. This is automatically called by [FailTestOnLeakRunListener] when the tests start
-     * running.
-     */
-    fun updateConfig() {
-      AppWatcher.config = AppWatcher.config.copy(enabled = true)
-      LeakCanary.config = LeakCanary.config.copy(dumpHeap = false)
-    }
+    @Deprecated(
+        "This is a no-op as LeakCanary automatically detects tests",
+        replaceWith = ReplaceWith("")
+    )
+    fun updateConfig() = Unit
   }
 }

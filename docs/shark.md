@@ -26,46 +26,66 @@ A few more things:
 * Shark is heavily tested (80% test coverage).
 * Shark can run in both Java and Android VMs, with no other dependency than Okio and Kotlin.
 * Shark can analyze both Java and Android VM hprof files.
+* Shark can deobfuscate hprof records if it has access to obfuscation mapping file.
 
 ## Shark CLI
 
 The Shark Command Line Interface (CLI) enables you to analyze heaps directly from your computer. It can dump the heap of an app installed on a connected Android device, analyze it, and even strip a heap dump of any sensitive data (e.g. PII, passwords or encryption keys) which is useful when sharing a heap dump.
 
-Download it [here](https://github.com/square/leakcanary/releases/download/v2.0-beta-3/shark-cli-2.0-beta-3.zip)!
+Install it via [Homebrew](https://brew.sh/):
 
-Usage instructions:
+```bash
+brew install leakcanary-shark
+```
+
+You can also download it [here](https://github.com/square/leakcanary/releases/download/v{{ leak_canary.release }}/shark-cli-{{ leak_canary.release }}.zip).
+
+You can then look for leaks in apps on any connected device, for example: 
 
 ```
-$ ./bin/shark-cli
-
-Shark CLI
-
-                 ^`.                 .=""=.
- ^_              \  \               / _  _ \
- \ \             {   \             |  d  b  |
- {  \           /     `~~~--__     \   /\   /
- {   \___----~~'              `~~-_/'-=\/=-'\,
-  \                         /// a  `~.      \ \
-  / /~~~~-, ,__.    ,      ///  __,,,,)      \ |
-  \/      \/    `~~~;   ,---~~-_`/ \        / \/
-                   /   /            '.    .'
-                  '._.'             _|`~~`|_
-                                    /|\  /|\
-
-Commands: [analyze-process, dump-process, analyze-hprof, strip-hprof]
-
-analyze-process: Dumps the heap for the provided process name, pulls the hprof file and analyzes it.
-  USAGE: analyze-process PROCESS_PACKAGE_NAME
-
-dump-process: Dumps the heap for the provided process name and pulls the hprof file.
-  USAGE: dump-process PROCESS_PACKAGE_NAME
-
-analyze-hprof: Analyzes the provided hprof file.
-  USAGE: analyze-hprof HPROF_FILE_PATH
-
-strip-hprof: Replaces all primitive arrays from the provided hprof file with arrays of zeroes.
-  USAGE: strip-hprof HPROF_FILE_PATH
+$ shark-cli --device emulator-5554 --process com.example.app.debug analyze
 ```
+
+!!! info
+    `shark-cli` works with all debuggable apps, even if they don't include the `leakcanary-android` dependency.
+
+Run `shark-cli` to see usage instructions:
+
+```
+$ shark-cli
+
+Usage: shark-cli [OPTIONS] COMMAND [ARGS]...
+
+                   ^`.                 .=""=.
+   ^_              \  \               / _  _ \
+   \ \             {   \             |  d  b  |
+   {  \           /     `~~~--__     \   /\   /
+   {   \___----~~'              `~~-_/'-=\/=-'\,
+    \                         /// a  `~.      \ \
+    / /~~~~-, ,__.    ,      ///  __,,,,)      \ |
+    \/      \/    `~~~;   ,---~~-_`/ \        / \/
+                     /   /            '.    .'
+                    '._.'             _|`~~`|_
+                                      /|\  /|\
+
+Options:
+  -p, --process TEXT              Full or partial name of a process, e.g.
+                                  "example" would match "com.example.app"
+  -d, --device ID                 device/emulator id
+  -m, --obfuscation-mapping PATH  path to obfuscation mapping file
+  --verbose / --no-verbose        provide additional details as to what
+                                  shark-cli is doing
+  -h, --hprof FILE                path to a .hprof file
+  --help                          Show this message and exit
+
+Commands:
+  interactive   Explore a heap dump.
+  analyze       Analyze a heap dump.
+  dump-process  Dump the heap and pull the hprof file.
+  strip-hprof   Replace all primitive arrays from the provided heap dump with
+                arrays of zeroes and generate a new "-stripped.hprof" file.
+```
+
 
 ## Shark code examples
 
@@ -120,19 +140,30 @@ dependencies {
 ```
 
 ```kotlin
-val heapAnalyzer = HeapAnalyzer(AnalyzerProgressListener.NONE)
-val analysis = heapAnalyzer.checkForLeaks(
-    heapDumpFile = heapDumpFile,
-    leakFinders = listOf(ObjectInspector { _, reporter ->
-      reporter.whenInstanceOf("com.example.ThingWithLifecycle") { instance ->
-        val field = instance["com.example.ThingWithLifecycle", "destroyed"]!!
-        val destroyed = field.value.asBoolean!!
-        if (destroyed) {
-          leakingReasons += "ThingWithLifecycle.destroyed = true"
-        }
-      }
-    })
-)
+// Marks any instance of com.example.ThingWithLifecycle with
+// ThingWithLifecycle.destroyed=true as leaking
+val leakingObjectFilter = object : LeakingObjectFilter {
+  override fun isLeakingObject(heapObject: HeapObject): Boolean {
+    return if (heapObject instanceOf "com.example.ThingWithLifecycle") {
+      val instance = heapObject as HeapInstance
+      val destroyedField = instance["com.example.ThingWithLifecycle", "destroyed"]!!
+      destroyedField.value.asBoolean!!
+    } else false
+  }
+}
+
+val leakingObjectFinder = FilteringLeakingObjectFinder(listOf(leakingObjectFilter))
+
+val heapAnalysis = Hprof.open(heapDumpFile)
+    .use { hprof ->
+      val heapGraph = HprofHeapGraph.indexHprof(hprof)
+      val heapAnalyzer = HeapAnalyzer(AnalyzerProgressListener.NONE)
+      heapAnalyzer.analyze(
+          heapDumpFile = heapDumpFile,
+          graph = heapGraph,
+          leakingObjectFinder = leakingObjectFinder,
+      )
+    }
 println(analysis)
 ```
 

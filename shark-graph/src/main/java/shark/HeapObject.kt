@@ -2,31 +2,20 @@ package shark
 
 import shark.HprofRecord.HeapDumpRecord.ObjectRecord
 import shark.HprofRecord.HeapDumpRecord.ObjectRecord.ClassDumpRecord
+import shark.HprofRecord.HeapDumpRecord.ObjectRecord.ClassDumpRecord.FieldRecord
+import shark.HprofRecord.HeapDumpRecord.ObjectRecord.ClassDumpRecord.StaticFieldRecord
 import shark.HprofRecord.HeapDumpRecord.ObjectRecord.InstanceDumpRecord
 import shark.HprofRecord.HeapDumpRecord.ObjectRecord.ObjectArrayDumpRecord
 import shark.HprofRecord.HeapDumpRecord.ObjectRecord.PrimitiveArrayDumpRecord
-import shark.HprofRecord.HeapDumpRecord.ObjectRecord.PrimitiveArrayDumpRecord.BooleanArrayDump
 import shark.HprofRecord.HeapDumpRecord.ObjectRecord.PrimitiveArrayDumpRecord.ByteArrayDump
 import shark.HprofRecord.HeapDumpRecord.ObjectRecord.PrimitiveArrayDumpRecord.CharArrayDump
-import shark.HprofRecord.HeapDumpRecord.ObjectRecord.PrimitiveArrayDumpRecord.DoubleArrayDump
-import shark.HprofRecord.HeapDumpRecord.ObjectRecord.PrimitiveArrayDumpRecord.FloatArrayDump
-import shark.HprofRecord.HeapDumpRecord.ObjectRecord.PrimitiveArrayDumpRecord.IntArrayDump
-import shark.HprofRecord.HeapDumpRecord.ObjectRecord.PrimitiveArrayDumpRecord.LongArrayDump
-import shark.HprofRecord.HeapDumpRecord.ObjectRecord.PrimitiveArrayDumpRecord.ShortArrayDump
-import shark.PrimitiveType.BOOLEAN
-import shark.PrimitiveType.BYTE
-import shark.PrimitiveType.CHAR
-import shark.PrimitiveType.DOUBLE
-import shark.PrimitiveType.FLOAT
-import shark.PrimitiveType.INT
-import shark.PrimitiveType.LONG
-import shark.PrimitiveType.SHORT
 import shark.ValueHolder.ReferenceHolder
 import shark.internal.IndexedObject.IndexedClass
 import shark.internal.IndexedObject.IndexedInstance
 import shark.internal.IndexedObject.IndexedObjectArray
 import shark.internal.IndexedObject.IndexedPrimitiveArray
 import java.nio.charset.Charset
+import java.util.Locale
 import kotlin.reflect.KClass
 
 /**
@@ -46,11 +35,24 @@ sealed class HeapObject {
   abstract val objectId: Long
 
   /**
+   * An positive object index that's specific to how Shark stores objects in memory.
+   * The index starts at 0 and ends at [HeapGraph.objectCount] - 1. There are no gaps, every index
+   * value corresponds to an object. Classes are first, then instances, then object arrays then
+   * primitive arrays.
+   */
+  abstract val objectIndex: Int
+
+  /**
    * Reads and returns the underlying [ObjectRecord].
    *
    * This may trigger IO reads.
    */
   abstract fun readRecord(): ObjectRecord
+
+  /**
+   * The total byte size for the record of this object in the heap dump.
+   */
+  abstract val recordSize: Int
 
   /**
    * This [HeapObject] as a [HeapClass] if it is one, or null otherwise
@@ -82,13 +84,35 @@ sealed class HeapObject {
   class HeapClass internal constructor(
     private val hprofGraph: HprofHeapGraph,
     private val indexedObject: IndexedClass,
-    override val objectId: Long
+    override val objectId: Long,
+    override val objectIndex: Int
   ) : HeapObject() {
     override val graph: HeapGraph
       get() = hprofGraph
 
     /**
+     * Whether this is class is a primitive wrapper type
+     */
+    val isPrimitiveWrapperClass: Boolean
+      get() = (name in primitiveWrapperClassNames)
+
+    /**
      * The name of this class, identical to [Class.getName].
+     * If this class is an array class, the name has a suffix of brackets for each dimension of
+     * the array, e.g. `com.Foo[][]` is a class for 2 dimensional arrays of `com.Foo`.
+     *
+     * The behavior for primitive types changes depending on the VM that dumped the heap. JVM
+     * heap dumps don't have any [HeapClass] object for primitive types, instead the
+     * `java.land.Class` class has 9 instances (the 8 primitive types and `void`). Android heap
+     * dumps have an [HeapClass] object for primitive type and the `java.land.Class` class has no
+     * instance.
+     *
+     * If this is an array class, you can find the component type by removing the brackets at the
+     * end, e.g. `name.substringBefore('[')`. Be careful when doing this for JVM heap dumps though,
+     * as if the component type is a primitive type there will not be a [HeapClass] object for it.
+     * This is especially tricky with N dimension primitive type arrays, which are instances of
+     * [HeapObjectArray] (vs single dimension primitive type arrays which are instances of
+     * [HeapPrimitiveArray]).
      */
     val name: String
       get() = hprofGraph.className(objectId)
@@ -108,6 +132,24 @@ sealed class HeapObject {
     val instanceByteSize: Int
       get() = indexedObject.instanceSize
 
+    override val recordSize: Int
+      get() = indexedObject.recordSize.toInt()
+
+    val hasReferenceInstanceFields: Boolean
+      get() = hprofGraph.classDumpHasReferenceFields(indexedObject)
+
+    /**
+     * Returns true if this class is an array class, and false otherwise.
+     */
+    val isArrayClass: Boolean
+      get() = name.endsWith("[]")
+
+    val isPrimitiveArrayClass: Boolean
+      get() = name in primitiveTypesByPrimitiveArrayClassName
+
+    val isObjectArrayClass: Boolean
+      get() = isArrayClass && !isPrimitiveArrayClass
+
     /**
      * The total byte size of fields for instances of this class, computed as the sum of the
      * individual size of each field of this class. This does not include the size of fields from
@@ -118,8 +160,7 @@ sealed class HeapObject {
      * @see instanceByteSize
      */
     fun readFieldsByteSize(): Int {
-      return readRecord()
-          .fields.sumBy {
+      return readRecordFields().sumBy {
         if (it.type == PrimitiveType.REFERENCE_HPROF_TYPE) {
           hprofGraph.identifierByteSize
         } else PrimitiveType.byteSizeByHprofType.getValue(it.type)
@@ -163,14 +204,40 @@ sealed class HeapObject {
      * Returns true if [superclass] is a superclass of this [HeapClass].
      */
     infix fun subclassOf(superclass: HeapClass): Boolean {
-      return classHierarchy.any { it.objectId == superclass.objectId }
+      return superclass.objectId != objectId && classHierarchy.any { it.objectId == superclass.objectId }
     }
 
     /**
      * All instances of this class, including instances of subclasses of this class.
      */
     val instances: Sequence<HeapInstance>
-      get() = hprofGraph.instances.filter { it instanceOf this }
+      get() = if (!isArrayClass) {
+        hprofGraph.instances.filter { it instanceOf this }
+      } else {
+        emptySequence()
+      }
+
+    val objectArrayInstances: Sequence<HeapObjectArray>
+      get() = if (isObjectArrayClass) {
+        hprofGraph.objectArrays.filter { it.indexedObject.arrayClassId == objectId }
+      } else {
+        emptySequence()
+      }
+
+    /**
+     * Primitive arrays are one dimensional arrays of a primitive type.
+     * N-dimension arrays of primitive types (e.g. int[][]) are object arrays pointing to primitive
+     * arrays.
+     */
+    val primitiveArrayInstances: Sequence<HeapPrimitiveArray>
+      get() {
+        val primitiveType = primitiveTypesByPrimitiveArrayClassName[name]
+        return if (primitiveType != null) {
+          hprofGraph.primitiveArrays.filter { it.primitiveType == primitiveType }
+        } else {
+          emptySequence()
+        }
+      }
 
     /**
      * All direct instances of this class, ie excluding any instance of subclasses of this class.
@@ -187,13 +254,24 @@ sealed class HeapObject {
       return hprofGraph.readClassDumpRecord(objectId, indexedObject)
     }
 
+    fun readRecordStaticFields() = hprofGraph.classDumpStaticFields(indexedObject)
+
+    fun readRecordFields() = hprofGraph.classDumpFields(indexedObject)
+
+    /**
+     * Returns the name of the field declared in this class for the specified [fieldRecord].
+     */
+    fun instanceFieldName(fieldRecord: FieldRecord): String {
+      return hprofGraph.fieldName(objectId, fieldRecord)
+    }
+
     /**
      * The static fields of this class, as a sequence of [HeapField].
      *
      * This may trigger IO reads.
      */
     fun readStaticFields(): Sequence<HeapField> {
-      return readRecord().staticFields.asSequence()
+      return readRecordStaticFields().asSequence()
           .map { fieldRecord ->
             HeapField(
                 this, hprofGraph.staticFieldName(objectId, fieldRecord),
@@ -212,12 +290,10 @@ sealed class HeapObject {
      * This may trigger IO reads.
      */
     fun readStaticField(fieldName: String): HeapField? {
-      for (fieldRecord in readRecord().staticFields) {
-        if (hprofGraph.staticFieldName(objectId, fieldRecord) == fieldName) {
-          return HeapField(
-              this, hprofGraph.staticFieldName(objectId, fieldRecord),
-              HeapValue(hprofGraph, fieldRecord.value)
-          )
+      for (fieldRecord in readRecordStaticFields()) {
+        val recordFieldName = hprofGraph.staticFieldName(objectId, fieldRecord)
+        if (recordFieldName == fieldName) {
+          return HeapField(this, fieldName, HeapValue(hprofGraph, fieldRecord.value))
         }
       }
       return null
@@ -240,11 +316,14 @@ sealed class HeapObject {
     private val hprofGraph: HprofHeapGraph,
     internal val indexedObject: IndexedInstance,
     override val objectId: Long,
+    override val objectIndex: Int
+  ) : HeapObject() {
+
     /**
      * Whether this is an instance of a primitive wrapper type.
      */
     val isPrimitiveWrapper: Boolean
-  ) : HeapObject() {
+      get() = instanceClassName in primitiveWrapperClassNames
 
     override val graph: HeapGraph
       get() = hprofGraph
@@ -274,6 +353,12 @@ sealed class HeapObject {
       get() = hprofGraph.findObjectById(indexedObject.classId) as HeapClass
 
     /**
+     * The heap identifier of the class of this instance.
+     */
+    val instanceClassId: Long
+      get() = indexedObject.classId
+
+    /**
      * Reads and returns the underlying [InstanceDumpRecord].
      *
      * This may trigger IO reads.
@@ -281,6 +366,9 @@ sealed class HeapObject {
     override fun readRecord(): InstanceDumpRecord {
       return hprofGraph.readInstanceDumpRecord(objectId, indexedObject)
     }
+
+    override val recordSize: Int
+      get() = indexedObject.recordSize.toInt()
 
     /**
      * Returns true if this is an instance of the class named [className] or an instance of a
@@ -359,8 +447,7 @@ sealed class HeapObject {
       }
       return instanceClass.classHierarchy
           .map { heapClass ->
-            heapClass.readRecord()
-                .fields.asSequence()
+            heapClass.readRecordFields().asSequence()
                 .map { fieldRecord ->
                   val fieldName = hprofGraph.fieldName(heapClass.objectId, fieldRecord)
                   val fieldValue = fieldReader.readValue(fieldRecord)
@@ -431,9 +518,9 @@ sealed class HeapObject {
    */
   class HeapObjectArray internal constructor(
     private val hprofGraph: HprofHeapGraph,
-    private val indexedObject: IndexedObjectArray,
+    internal val indexedObject: IndexedObjectArray,
     override val objectId: Long,
-    val isPrimitiveWrapperArray: Boolean
+    override val objectIndex: Int
   ) : HeapObject() {
 
     override val graph: HeapGraph
@@ -461,7 +548,7 @@ sealed class HeapObject {
      * The total byte shallow size of elements in this array.
      */
     fun readByteSize(): Int {
-      return readRecord().elementIds.size * hprofGraph.identifierByteSize
+      return hprofGraph.readObjectArrayByteSize(objectId, indexedObject)
     }
 
     /**
@@ -472,6 +559,9 @@ sealed class HeapObject {
     override fun readRecord(): ObjectArrayDumpRecord {
       return hprofGraph.readObjectArrayDumpRecord(objectId, indexedObject)
     }
+
+    override val recordSize: Int
+      get() = indexedObject.recordSize.toInt()
 
     /**
      * The elements in this array, as a sequence of [HeapValue].
@@ -494,7 +584,8 @@ sealed class HeapObject {
   class HeapPrimitiveArray internal constructor(
     private val hprofGraph: HprofHeapGraph,
     private val indexedObject: IndexedPrimitiveArray,
-    override val objectId: Long
+    override val objectId: Long,
+    override val objectIndex: Int
   ) : HeapObject() {
 
     override val graph: HeapGraph
@@ -504,16 +595,7 @@ sealed class HeapObject {
      * The total byte shallow size of elements in this array.
      */
     fun readByteSize(): Int {
-      return when (val record = readRecord()) {
-        is BooleanArrayDump -> record.array.size * PrimitiveType.BOOLEAN.byteSize
-        is CharArrayDump -> record.array.size * PrimitiveType.CHAR.byteSize
-        is FloatArrayDump -> record.array.size * PrimitiveType.FLOAT.byteSize
-        is DoubleArrayDump -> record.array.size * PrimitiveType.DOUBLE.byteSize
-        is ByteArrayDump -> record.array.size * PrimitiveType.BYTE.byteSize
-        is ShortArrayDump -> record.array.size * PrimitiveType.SHORT.byteSize
-        is IntArrayDump -> record.array.size * PrimitiveType.INT.byteSize
-        is LongArrayDump -> record.array.size * PrimitiveType.LONG.byteSize
-      }
+      return hprofGraph.readPrimitiveArrayByteSize(objectId, indexedObject)
     }
 
     /**
@@ -526,16 +608,13 @@ sealed class HeapObject {
      * The name of the class of this array, identical to [Class.getName].
      */
     val arrayClassName: String
-      get() = when (primitiveType) {
-        BOOLEAN -> "boolean[]"
-        CHAR -> "char[]"
-        FLOAT -> "float[]"
-        DOUBLE -> "double[]"
-        BYTE -> "byte[]"
-        SHORT -> "short[]"
-        INT -> "int[]"
-        LONG -> "long[]"
-      }
+      get() = "${primitiveType.name.toLowerCase(Locale.US)}[]"
+
+    /**
+     * The class of this array.
+     */
+    val arrayClass: HeapClass
+      get() = graph.findClassByName(arrayClassName)!!
 
     /**
      * Reads and returns the underlying [PrimitiveArrayDumpRecord].
@@ -546,12 +625,28 @@ sealed class HeapObject {
       return hprofGraph.readPrimitiveArrayDumpRecord(objectId, indexedObject)
     }
 
+    override val recordSize: Int
+      get() = indexedObject.recordSize.toInt()
+
     override fun toString(): String {
       return "primitive array @$objectId of $arrayClassName"
     }
   }
 
   companion object {
+
+    internal val primitiveTypesByPrimitiveArrayClassName = PrimitiveType.values()
+        .map { "${it.name.toLowerCase(Locale.US)}[]" to it }
+        .toMap()
+
+    private val primitiveWrapperClassNames = setOf<String>(
+        Boolean::class.javaObjectType.name, Char::class.javaObjectType.name,
+        Float::class.javaObjectType.name,
+        Double::class.javaObjectType.name, Byte::class.javaObjectType.name,
+        Short::class.javaObjectType.name,
+        Int::class.javaObjectType.name, Long::class.javaObjectType.name
+    )
+
     private fun classSimpleName(className: String): String {
       val separator = className.lastIndexOf('.')
       return if (separator == -1) {

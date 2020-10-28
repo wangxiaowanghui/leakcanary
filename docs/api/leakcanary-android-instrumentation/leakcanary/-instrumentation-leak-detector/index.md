@@ -6,12 +6,8 @@
 
 [InstrumentationLeakDetector](./index.md) can be used to detect memory leaks in instrumentation tests.
 
-To use it, you need to:
-
-* Call [updateConfig](update-config.md) so that [AppWatcher](#) will watch objects and [LeakCanary](#) will not dump
-the heap on retained objects
-* Add an instrumentation test listener (e.g. [FailTestOnLeakRunListener](../-fail-test-on-leak-run-listener/index.md)) that will invoke
-[detectLeaks](detect-leaks.md).
+To use it, you need to add an instrumentation test listener (e.g. [FailTestOnLeakRunListener](../-fail-test-on-leak-run-listener/index.md))
+that will invoke [detectLeaks](detect-leaks.md).
 
 ### Add an instrumentation test listener
 
@@ -49,7 +45,7 @@ This approach would have two disadvantages:
 * Heap dumps freeze the VM, and the leak analysis is IO and CPU heavy. This can slow down
 the test and introduce flakiness
 * The leak analysis is asynchronous by default. This means the tests could finish and the
-process die before the analysis is finished.
+process dies before the analysis is finished.
 
 The approach taken here is to collect all objects to watch as you run the test, but not
 do any heap dump during the test. Then, at the end, if any of the watched objects is still in
@@ -78,4 +74,4 @@ no matter the number of objects retained.
 
 | Name | Summary |
 |---|---|
-| [updateConfig](update-config.md) | `fun updateConfig(): `[`Unit`](https://kotlinlang.org/api/latest/jvm/stdlib/kotlin/-unit/index.html)<br>Configures [AppWatcher](#) to watch objects and [LeakCanary](#) to not dump the heap on retained objects so that instrumentation tests run smoothly, and we can look for leaks at the end of a test. This is automatically called by [FailTestOnLeakRunListener](../-fail-test-on-leak-run-listener/index.md) when the tests start running. |
+| [updateConfig](update-config.md) | `fun ~~updateConfig~~(): `[`Unit`](https://kotlinlang.org/api/latest/jvm/stdlib/kotlin/-unit/index.html) |

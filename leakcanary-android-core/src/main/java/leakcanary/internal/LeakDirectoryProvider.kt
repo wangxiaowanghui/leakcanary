@@ -30,7 +30,6 @@ import java.io.File
 import java.io.FilenameFilter
 import java.text.SimpleDateFormat
 import java.util.ArrayList
-import java.util.Arrays
 import java.util.Date
 import java.util.Locale
 
@@ -42,11 +41,7 @@ internal class LeakDirectoryProvider constructor(
   private val maxStoredHeapDumps: () -> Int,
   private val requestExternalStoragePermission: () -> Boolean
 ) {
-
   private val context: Context = context.applicationContext
-
-  @Volatile private var writeExternalStorageGranted: Boolean = false
-  @Volatile private var permissionNotificationDisplayed: Boolean = false
 
   fun listFiles(filter: FilenameFilter): MutableList<File> {
     if (!hasStoragePermission() && requestExternalStoragePermission()) {
@@ -100,23 +95,6 @@ internal class LeakDirectoryProvider constructor(
 
     val fileName = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss_SSS'.hprof'", Locale.US).format(Date())
     return File(storageDirectory, fileName)
-  }
-
-  fun clearLeakDirectory() {
-    val allFilesExceptPending =
-      listFiles(FilenameFilter { _, filename ->
-        true
-      })
-    for (file in allFilesExceptPending) {
-      val path = file.absolutePath
-      val deleted = file.delete()
-      if (deleted) {
-        filesDeletedClearDirectory += path
-      }
-      if (!deleted) {
-        SharkLog.d { "Could not delete file ${file.path}" }
-      }
-    }
   }
 
   @TargetApi(M) fun hasStoragePermission(): Boolean {
@@ -200,9 +178,10 @@ internal class LeakDirectoryProvider constructor(
   }
 
   companion object {
+    @Volatile private var writeExternalStorageGranted: Boolean = false
+    @Volatile private var permissionNotificationDisplayed: Boolean = false
 
     private val filesDeletedTooOld = mutableListOf<String>()
-    private val filesDeletedClearDirectory = mutableListOf<String>()
     val filesDeletedRemoveLeak = mutableListOf<String>()
 
     private const val HPROF_SUFFIX = ".hprof"
@@ -210,10 +189,9 @@ internal class LeakDirectoryProvider constructor(
     fun hprofDeleteReason(file: File): String {
       val path = file.absolutePath
       return when {
-        filesDeletedTooOld.contains(path) -> "Older than all other hprof files"
-        filesDeletedClearDirectory.contains(path) -> "Hprof directory cleared"
-        filesDeletedRemoveLeak.contains(path) -> "Leak manually removed"
-        else -> "Unknown"
+        filesDeletedTooOld.contains(path) -> "older than all other hprof files"
+        filesDeletedRemoveLeak.contains(path) -> "leak manually removed"
+        else -> "unknown"
       }
     }
   }

@@ -2,12 +2,13 @@ package leakcanary
 
 import android.util.Log
 import androidx.test.platform.app.InstrumentationRegistry
+import leakcanary.Profiler.runWithProfilerSampling
 import org.junit.Ignore
 import org.junit.Test
 import shark.AndroidObjectInspectors
 import shark.AndroidReferenceMatchers
 import shark.HeapAnalyzer
-import shark.ObjectInspectors.KEYED_WEAK_REFERENCE
+import shark.KeyedWeakReferenceFinder
 import shark.OnAnalysisProgressListener
 import shark.OnAnalysisProgressListener.Step
 import shark.SharkLog
@@ -29,25 +30,21 @@ class ProfiledTest {
     context.assets.open(fileName)
         .copyTo(FileOutputStream(heapDumpFile))
 
-    SharkLog.d { "Waiting, please start profiler" }
-    Profiler.waitForSamplingStart()
-
-    val analyzer = HeapAnalyzer(object : OnAnalysisProgressListener {
-      override fun onAnalysisProgress(step: Step) {
-        Log.d("LeakCanary", step.name)
-      }
-    })
-    val result = analyzer.analyze(
-        heapDumpFile = heapDumpFile,
-        referenceMatchers = AndroidReferenceMatchers.appDefaults,
-        objectInspectors = AndroidObjectInspectors.appDefaults,
-        computeRetainedHeapSize = true,
-        leakFinders = listOf(KEYED_WEAK_REFERENCE)
-    )
-    SharkLog.d { result.toString() }
-    // Giving time to stop CPU profiler (otherwise trace won't succeed)
-    Profiler.waitForSamplingStop()
+    runWithProfilerSampling {
+      val analyzer = HeapAnalyzer(object : OnAnalysisProgressListener {
+        override fun onAnalysisProgress(step: Step) {
+          Log.d("LeakCanary", step.name)
+        }
+      })
+      val result = analyzer.analyze(
+          heapDumpFile = heapDumpFile,
+          leakingObjectFinder = KeyedWeakReferenceFinder,
+          referenceMatchers = AndroidReferenceMatchers.appDefaults,
+          objectInspectors = AndroidObjectInspectors.appDefaults,
+          computeRetainedHeapSize = true
+      )
+      SharkLog.d { result.toString() }
+    }
   }
-
 }
 

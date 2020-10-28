@@ -23,7 +23,6 @@ import java.util.Locale
  *
  * See https://github.com/carrotsearch/hppc .
  */
-@Suppress("TooManyFunctions")
 internal class LongObjectScatterMap<T> {
   /**
    * The array holding keys.
@@ -155,7 +154,7 @@ internal class LongObjectScatterMap<T> {
     }
   }
 
-  fun entrySequence(): Sequence<Pair<Long, T>> {
+  fun entrySequence(): Sequence<LongObjectPair<T>> {
     val max = mask + 1
     var slot = -1
     return generateSequence {
@@ -172,7 +171,7 @@ internal class LongObjectScatterMap<T> {
       }
       if (slot == max && hasEmptyKey) {
         slot++
-        return@generateSequence  0L to values[max]!!
+        return@generateSequence 0L to values[max]!!
       }
       return@generateSequence null
     }

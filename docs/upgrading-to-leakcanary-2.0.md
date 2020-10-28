@@ -22,7 +22,7 @@ dependencies {
 
 ```groovy
 dependencies {
-  debugImplementation 'com.squareup.leakcanary:leakcanary-android:2.0-beta-3'
+  debugImplementation 'com.squareup.leakcanary:leakcanary-android:{{ leak_canary.release }}'
 }
 ```
 
@@ -79,13 +79,13 @@ val objectWatcher: ObjectWatcher = AppWatcher.objectWatcher
 
 ## Compile errors because RefWatcher is used in release code
 
-If you were using `RefWatcher` in non debug code, you now get a compile error because the no-op artifact is gone. [ObjectWatcher](/leakcanary/api/leakcanary-object-watcher/leakcanary/-object-watcher/) now lives in the `object-watcher` artifact, which is suitable for production. You have two options:
+If you were using `RefWatcher` in non debug code, you now get a compile error because the no-op artifact is gone. [ObjectWatcher](/leakcanary/api/leakcanary-object-watcher/leakcanary/-object-watcher/) now lives in the `object-watcher` artifact, which is suitable for release builds. You have two options:
 
 ### Option 1: Add `object-watcher-android` to release builds.
 
 ```groovy
 dependencies {
-  implementation 'com.squareup.leakcanary:leakcanary-object-watcher-android:2.0-beta-3'
+  implementation 'com.squareup.leakcanary:leakcanary-object-watcher-android:{{ leak_canary.release }}'
 }
 ```
 
@@ -103,18 +103,18 @@ val retainedObjectCount = AppWatcher.objectWatcher.retainedObjectCount
 ```kotlin
 // In shared code
 interface MaybeObjectWatcher {
-  fun watch(watchedObject: Any)
+  fun watch(watchedObject: Any, description: String)
 
   object None : MaybeObjectWatcher {
-    override fun watch(watchedObject: Any) {
+    override fun watch(watchedObject: Any, description: String) {
     }
   }
 }
 
 // In debug code
 class RealObjectWatcher : MaybeObjectWatcher {
-  override fun watch(watchedObject: Any) {
-    AppWatcher.objectWatcher.watch(watchedObject)
+  override fun watch(watchedObject: Any, description: String) {
+    AppWatcher.objectWatcher.watch(watchedObject, description)
   }
 }
 ```

@@ -13,10 +13,13 @@ An instance in the heap dump.
 | [byteSize](byte-size.md) | `val byteSize: `[`Int`](https://kotlinlang.org/api/latest/jvm/stdlib/kotlin/-int/index.html) |
 | [graph](graph.md) | `val graph: `[`HeapGraph`](../../-heap-graph/index.md)<br>The graph of objects in the heap, which you can use to navigate the heap. |
 | [instanceClass](instance-class.md) | `val instanceClass: `[`HeapObject.HeapClass`](../-heap-class/index.md)<br>The class of this instance. |
+| [instanceClassId](instance-class-id.md) | `val instanceClassId: `[`Long`](https://kotlinlang.org/api/latest/jvm/stdlib/kotlin/-long/index.html)<br>The heap identifier of the class of this instance. |
 | [instanceClassName](instance-class-name.md) | `val instanceClassName: `[`String`](https://kotlinlang.org/api/latest/jvm/stdlib/kotlin/-string/index.html)<br>The name of the class of this instance, identical to [Class.getName](https://docs.oracle.com/javase/6/docs/api/java/lang/Class.html#getName()). |
 | [instanceClassSimpleName](instance-class-simple-name.md) | `val instanceClassSimpleName: `[`String`](https://kotlinlang.org/api/latest/jvm/stdlib/kotlin/-string/index.html)<br>Returns [instanceClassName](instance-class-name.md) stripped of any string content before the last period (included). |
 | [isPrimitiveWrapper](is-primitive-wrapper.md) | `val isPrimitiveWrapper: `[`Boolean`](https://kotlinlang.org/api/latest/jvm/stdlib/kotlin/-boolean/index.html)<br>Whether this is an instance of a primitive wrapper type. |
 | [objectId](object-id.md) | `val objectId: `[`Long`](https://kotlinlang.org/api/latest/jvm/stdlib/kotlin/-long/index.html)<br>The heap identifier of this object. |
+| [objectIndex](object-index.md) | `val objectIndex: `[`Int`](https://kotlinlang.org/api/latest/jvm/stdlib/kotlin/-int/index.html)<br>An positive object index that's specific to how Shark stores objects in memory. The index starts at 0 and ends at [HeapGraph.objectCount](../../-heap-graph/object-count.md) - 1. There are no gaps, every index value corresponds to an object. Classes are first, then instances, then object arrays then primitive arrays. |
+| [recordSize](record-size.md) | `val recordSize: `[`Int`](https://kotlinlang.org/api/latest/jvm/stdlib/kotlin/-int/index.html)<br>The total byte size for the record of this object in the heap dump. |
 
 ### Inherited Properties
 
